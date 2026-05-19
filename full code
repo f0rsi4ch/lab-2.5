@@ -1,0 +1,222 @@
+import time
+from dataclasses import dataclass
+from enum import Enum
+
+class PaymentMethod(Enum):
+    CARD = "Card"
+    CASH = "Cash"
+    PAYPAL = "Paypal"
+
+@dataclass
+class ProductData:
+    name: str
+    price: float
+    stock: int
+
+class Product:
+    def __init__(self, data: ProductData):
+        if data.price < 0:
+            raise ValueError("Price cannot be negative")
+        if data.stock < 0:
+            raise ValueError("Stock cannot be negative")
+        self._data = data
+
+    @property
+    def name(self): return self._data.name
+
+    @property
+    def price(self): return self._data.price
+
+    @price.setter
+    def price(self, value):
+        if value < 0:
+            raise ValueError("Price cannot be negative")
+        self._data.price = value
+
+    @property
+    def stock(self): return self._data.stock
+
+    @stock.setter
+    def stock(self, value):
+        if value < 0:
+            raise ValueError("Stock cannot be negative")
+        self._data.stock = value
+
+    def __str__(self):
+        return f"Product: {self.name}, Price: {self.price}"
+
+    def __repr__(self):
+        return f"Product(name='{self.name}', price={self.price})"
+
+    def __add__(self, other):
+        if isinstance(other, (int, float)):
+            new_data = ProductData(self.name, self.price + other, self.stock)
+            return Product(new_data)
+        raise TypeError("Support only numeric addition")
+
+    def __lt__(self, other):
+        if not isinstance(other, Product): return NotImplemented
+        return self.price < other.price
+
+    def get_final_price(self):
+        return self.price
+
+class DigitalProduct(Product):
+    def __init__(self, data: ProductData, size):
+        super().__init__(data)
+        self.size = size
+
+    def get_final_price(self):
+        return self.price * 0.9
+
+class PhysicalProduct(Product):
+    def __init__(self, data: ProductData, weight, shipping_cost):
+        super().__init__(data)
+        self.weight = weight
+        self.shipping_cost = shipping_cost
+
+    def get_final_price(self):
+        return self.price + self.shipping_cost
+
+# 1. ФУНКТОР (Об'єкт-функція зі збереженням внутрішнього стану)
+class TaxCalculator:
+    def __init__(self, tax_rate: float):
+        self.tax_rate = tax_rate
+        self.calculations_count = 0
+        self.total_tax_accumulated = 0.0
+
+    def __call__(self, price: float) -> float:
+        self.calculations_count += 1
+        calculated_tax = price * self.tax_rate
+        self.total_tax_accumulated += calculated_tax
+        return calculated_tax
+
+# 2. КАСТОМНИЙ ІТЕРАТОР (Фільтрація виключно фізичних товарів)
+class PhysicalProductIterator:
+    def __init__(self, items_list):
+        self.items_list = items_list
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        while self.index < len(self.items_list):
+            product, qty = self.items_list[self.index]
+            self.index += 1
+            if isinstance(product, PhysicalProduct):
+                return product, qty
+        raise StopIteration
+
+class ShoppingCart:
+    def __init__(self):
+        self.items = []
+        self.tax_calculator = TaxCalculator(0.20)  # ПДВ 20%
+
+    def add(self, product: Product, qty: int):
+        if qty > product.stock:
+            raise ValueError("Not enough stock")
+        self.items.append((product, qty))
+
+    def __len__(self):
+        return len(self.items)
+
+    def __iter__(self):
+        sorted_items = sorted(self.items, key=lambda x: x[0].price)
+        return iter(sorted_items)
+
+    def get_physical_products(self):
+        return PhysicalProductIterator(self.items)
+
+    # 3. ГЕНЕРАТОР (Посторінкова видача чека)
+    def generate_receipt_chunks(self, chunk_size: int):
+        for i in range(0, len(self.items), chunk_size):
+            yield self.items[i:i + chunk_size]
+
+class Checkout:
+    def __init__(self, cart: ShoppingCart):
+        self.cart = cart
+        self.start_time = None
+
+    def __enter__(self):
+        self.start_time = time.time()
+        for p, q in self.cart.items:
+            if p.stock < q:
+                raise ValueError(f"{p.name} out of stock")
+            p.stock -= q
+        print("Products reserved")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        duration = time.time() - self.start_time
+        if duration > 5:
+            print(f"Timeout: {duration:.1f}s. Status: Expired.")
+            for p, q in self.cart.items:
+                p.stock += q
+            return False
+        if exc_type:
+            for p, q in self.cart.items:
+                p.stock += q
+            print("Payment failed, stock restored")
+        else:
+            print("Payment success")
+        return False
+
+if __name__ == "__main__":
+    try:
+        cart = ShoppingCart()
+
+        # ТУТ БУЛО НАПОВНЕННЯ (KEYBOARD І ТД) — ТЕПЕР КОШИК ПОВНІСТЮ ЧИСТИЙ
+
+        print("--- Create new product ---")
+        print("Choose product type: 1 Digital 2 Physical")
+        p_type = int(input("Type: "))
+
+        name = input("Product name: ")
+        price = float(input("Price: "))
+        stock = int(input("Stock: "))
+
+        data = ProductData(name, price, stock)
+
+        if p_type == 1:
+            size = float(input("File size (MB): "))
+            product = DigitalProduct(data, size)
+        else:
+            weight = float(input("Weight (kg): "))
+            shipping = float(input("Shipping cost: "))
+            product = PhysicalProduct(data, weight, shipping)
+
+        qty = int(input("Quantity: "))
+        cart.add(product, qty)
+
+        print("\n--- Functor Demonstration (Tax Calculation) ---")
+        for p, q in cart.items:
+            item_tax = cart.tax_calculator(p.price)
+            print(f"Product: {p.name} | Base Tax (20%): {item_tax}")
+        
+        print(f"Total calculations count: {cart.tax_calculator.calculations_count}")
+        print(f"Total tax accumulated in functor: {cart.tax_calculator.total_tax_accumulated}")
+
+        print("\n--- Custom Iterator Demonstration (Physical Delivery Only) ---")
+        for phys_p, phys_qty in cart.get_physical_products():
+            print(f"Shipping required for: {phys_p.name} (Qty: {phys_qty})")
+
+        print("\n--- Generator Demonstration (Receipt Pagination by 1 item) ---")
+        for index, chunk in enumerate(cart.generate_receipt_chunks(1), 1):
+            print(f"Receipt Page #{index}: {chunk}")
+
+        print("\n--- Checkout Processing ---")
+        print(f"Debug (repr): {repr(product)}")
+        print(f"User (str): {product}")
+
+        with Checkout(cart):
+            confirm = input("Type pay to confirm: ")
+            if confirm != "pay":
+                raise Exception("Payment cancelled")
+
+        print("Remaining stock:", product.stock)
+
+    except ValueError as e:
+        print("Error:", e)
+    except Exception as e:
+        print("Exception:", e)
